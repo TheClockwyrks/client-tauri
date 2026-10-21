@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The operator client's icon: "TC" in the console's accent on its surface
+  color. It is the source of every icon the crate commits, under icons/ and
+  the Android launcher icons under gen/android, which `tauri icon
+  app-icon/icon.json` draws from it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <rect x="64" y="64" width="896" height="896" rx="192" fill="#120a1c" stroke="#6a3aa0" stroke-width="24" />
+  <g fill="#ff9d2f">
+    <rect x="186" y="318" width="280" height="80" />
+    <rect x="286" y="318" width="80" height="388" />
+  </g>
+  <path d="M 803 391 A 172 172 0 1 0 803 633" fill="none" stroke="#ff9d2f" stroke-width="80" />
+</svg>

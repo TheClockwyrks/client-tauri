@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the application trusts on the network.
+
+  A release build takes the system anchors alone, which is what this file leaves
+  in place by declaring nothing outside the debug overrides. A debuggable build
+  additionally trusts the authorities the developer installed on the handset, so
+  a debug APK reaches a server behind a private authority over HTTPS.
+-->
+<network-security-config>
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

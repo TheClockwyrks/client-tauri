@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The foreground of the Android adaptive launcher icon: the mark of icon.svg
+  alone, on no ground, inside the circle every launcher's mask keeps. The
+  launcher lays it over the ground icon.json names.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <g transform="translate(512 512) scale(0.62) translate(-512 -512)">
+    <g fill="#ff9d2f">
+      <rect x="186" y="318" width="280" height="80" />
+      <rect x="286" y="318" width="80" height="388" />
+    </g>
+    <path d="M 803 391 A 172 172 0 1 0 803 633" fill="none" stroke="#ff9d2f" stroke-width="80" />
+  </g>
+</svg>

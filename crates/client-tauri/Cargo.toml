@@ -1,0 +1,38 @@
+[package]
+name = "test-cabinet-client-tauri"
+description = "The operator client for Windows, Linux, macOS and Android."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+# The binary keeps the package's name, which is what the bundles call it.
+default-run = "test-cabinet-client-tauri"
+
+[lints]
+workspace = true
+
+# The shell is a library beside a thin desktop binary: the desktop binary links
+# the `rlib`, and the Android build's Gradle project loads the `cdylib` as the
+# native library `libtest_cabinet_client_tauri_lib.so`, whose name is this
+# one. `staticlib` is what an iOS build would link.
+[lib]
+name = "test_cabinet_client_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+# Take a crate of another repository up with `<crate> = { workspace = true }`;
+# the root manifest offers the ones the dependency edges permit.
+percent-encoding = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true }
+tauri-plugin-clipboard-manager = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true }

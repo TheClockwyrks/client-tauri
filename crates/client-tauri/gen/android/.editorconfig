@@ -1,0 +1,14 @@
+# EditorConfig is awesome: https://EditorConfig.org
+
+# top-most EditorConfig file
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = false
+# `tauri android init` writes `false` here. The workspace's end-of-file-fixer
+# hook ends every text file with one newline, so the editor does too.
+insert_final_newline = true

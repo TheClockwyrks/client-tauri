@@ -1,0 +1,37 @@
+# Project-specific words accepted by cspell. One word per line,
+# case-insensitive. Add a word here when it is a real domain term that the
+# default dictionary does not know.
+affordances
+appindicator
+backgrounded
+clippy
+Clockwyrks
+devcontainer
+doctests
+frontmatter
+genyume
+gitrun
+GTK
+libayatana
+librsvg
+libwebkit
+libxdo
+markdownlint
+nextest
+nyxsis
+pgrep
+pyproject
+pytest
+rustdoc
+rustup
+shellcheck
+sideloading
+subfolders
+superrepo
+tauri
+tcab
+testcabinet
+worktree
+worktrees
+test-cabinet-client-tauri
+client-tauri

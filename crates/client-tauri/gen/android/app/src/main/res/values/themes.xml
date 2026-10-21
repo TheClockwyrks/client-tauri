@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- The application's theme. The console draws its own chrome, so the
+         activity has no action bar. -->
+    <style name="Theme.test_cabinet_client_tauri" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/console_background</item>
+    </style>
+</resources>

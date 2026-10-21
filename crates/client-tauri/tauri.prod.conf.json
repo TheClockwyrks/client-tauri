@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "console": {
+      "url": "https://console.testcabinet.ai"
+    }
+  }
+}
