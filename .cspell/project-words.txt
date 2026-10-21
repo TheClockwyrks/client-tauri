@@ -1,9 +1,11 @@
-# Project-specific words accepted by cspell. One word per line,
 # case-insensitive. Add a word here when it is a real domain term that the
 # default dictionary does not know.
+# Project-specific words accepted by cspell. One word per line,
 affordances
+anydpi
 appindicator
 backgrounded
+client-tauri
 clippy
 Clockwyrks
 devcontainer
@@ -11,6 +13,7 @@ doctests
 frontmatter
 genyume
 gitrun
+gradlew
 GTK
 libayatana
 librsvg
@@ -30,8 +33,7 @@ subfolders
 superrepo
 tauri
 tcab
+test-cabinet-client-tauri
 testcabinet
 worktree
 worktrees
-test-cabinet-client-tauri
-client-tauri
