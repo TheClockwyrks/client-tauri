@@ -26,9 +26,13 @@ fn replaces_reserved_and_control_characters() {
 }
 
 #[test]
-fn trims_dots_and_spaces_at_either_end() {
+fn trims_trailing_dots_and_spaces_and_keeps_a_leading_dot() {
     assert_eq!(sanitize("  report.pdf. "), "report.pdf");
+    assert_eq!(sanitize(".env"), ".env");
+    assert_eq!(sanitize(".gitignore "), ".gitignore");
+    assert_eq!(sanitize("..config"), "..config");
     assert_eq!(sanitize(".."), "download");
+    assert_eq!(sanitize(". ."), "download");
     assert_eq!(sanitize(""), "download");
     assert_eq!(sanitize("   "), "download");
 }
@@ -41,6 +45,25 @@ fn renames_a_device_windows_reserves() {
     assert_eq!(sanitize("LPT9.log"), "LPT9_.log");
     assert_eq!(sanitize("console.log"), "console.log");
     assert_eq!(sanitize("COM10.txt"), "COM10.txt");
+    // The part before the first dot is the one Windows reads.
+    assert_eq!(sanitize("nul.tar.gz"), "nul_.tar.gz");
+    assert_eq!(sanitize("aux.anything.png"), "aux_.anything.png");
+    assert_eq!(sanitize("Con.Report.pdf"), "Con_.Report.pdf");
+    // Trailing spaces in it are ignored.
+    assert_eq!(sanitize("CON .txt"), "CON _.txt");
+    assert_eq!(sanitize("prn  .log"), "prn  _.log");
+    assert_eq!(sanitize("aux "), "aux_");
+    // The console buffers and the superscript ports.
+    assert_eq!(sanitize("CONIN$"), "CONIN$_");
+    assert_eq!(sanitize("conout$.txt"), "conout$_.txt");
+    assert_eq!(sanitize("COM\u{b9}.txt"), "COM\u{b9}_.txt");
+    assert_eq!(sanitize("lpt\u{b2}"), "lpt\u{b2}_");
+    assert_eq!(sanitize("LPT\u{b3}.log"), "LPT\u{b3}_.log");
+    assert_eq!(sanitize("COM0.txt"), "COM0_.txt");
+    // Neither a name that merely starts like one nor a dotfile.
+    assert_eq!(sanitize("com\u{b9}0.txt"), "com\u{b9}0.txt");
+    assert_eq!(sanitize("CONIN.txt"), "CONIN.txt");
+    assert_eq!(sanitize(".con"), ".con");
 }
 
 #[test]
@@ -131,4 +154,50 @@ fn decodes_the_name_header() {
     assert_eq!(header_name(Some("..%2F..%2Fetc%2Fpasswd")), "passwd");
     assert_eq!(header_name(Some("%FF.bin")), "\u{FFFD}.bin");
     assert_eq!(header_name(None), "download");
+}
+
+#[test]
+fn reserves_a_distinct_path_for_each_download_under_way() {
+    let directory = Path::new("/downloads");
+    let on_disk = directory.join("run.tar.gz");
+    let exists = |path: &Path| path == on_disk;
+    let mut reservations = Reservations::default();
+    let first = reservations.reserve("https://c/a", directory, "run.tar.gz", exists);
+    let second = reservations.reserve("https://c/b", directory, "run.tar.gz", exists);
+    let again = reservations.reserve("https://c/a", directory, "run.tar.gz", exists);
+    assert_eq!(first, directory.join("run (1).tar.gz"));
+    assert_eq!(second, directory.join("run (2).tar.gz"));
+    assert_eq!(again, directory.join("run (3).tar.gz"));
+    assert!(reservations.is_reserved(&first));
+}
+
+#[test]
+fn releases_the_reported_path_or_the_urls_earliest() {
+    let directory = Path::new("/downloads");
+    let exists = |_: &Path| false;
+    let mut reservations = Reservations::default();
+    let url = "https://c/archive";
+    let first = reservations.reserve(url, directory, "run.zip", exists);
+    let second = reservations.reserve(url, directory, "run.zip", exists);
+    let third = reservations.reserve(url, directory, "run.zip", exists);
+    // The WebView names the second as finished.
+    assert_eq!(
+        reservations.release(url, Some(&second)),
+        Some(second.clone())
+    );
+    assert!(!reservations.is_reserved(&second));
+    // Unnamed, the earliest still under way is the one released.
+    assert_eq!(reservations.release(url, None), Some(first.clone()));
+    // A path that is none of the URL's releases the earliest too.
+    assert_eq!(
+        reservations.release(url, Some(Path::new("/elsewhere/run.zip"))),
+        Some(third.clone())
+    );
+    assert_eq!(reservations.release(url, None), None);
+    assert_eq!(reservations.release("https://c/never", None), None);
+    // Once released, the first name is free again.
+    assert_eq!(
+        reservations.reserve(url, directory, "run.zip", exists),
+        first
+    );
 }

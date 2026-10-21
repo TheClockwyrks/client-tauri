@@ -14,14 +14,33 @@ use tauri::ipc::CapabilityBuilder;
 use tauri::utils::config::PluginConfig;
 use url::{Host, Url};
 
+use crate::token::ShellToken;
+
 /// The key under `plugins` in the configuration that holds the console.
 pub const CONFIG_KEY: &str = "console";
 
 /// The hosts of the sign-in flow, each standing for itself and its
 /// subdomains: the Cloudflare Access team domain in front of the console and
-/// the Microsoft login page it signs in at. A link from the console to one of
-/// them stays inside the WebView.
-pub const SIGN_IN_HOSTS: &[&str] = &["cloudflareaccess.com", "login.microsoftonline.com"];
+/// the Microsoft login pages it signs in at. A link from the console to one of
+/// them, and a navigation of the main frame to one, stays inside the WebView.
+///
+/// Only the hosts a top-level navigation of the sign-in flow reaches are
+/// listed: Microsoft Entra's sign-in and its legacy and seamless single
+/// sign-on endpoints, the Microsoft account pages a personal account passes
+/// through, and the security-info pages a first multi-factor registration
+/// leads to. The flow's scripts and images, from `aadcdn.msftauth.net` and
+/// the like, are subresources no navigation policy judges.
+pub const SIGN_IN_HOSTS: &[&str] = &[
+    "cloudflareaccess.com",
+    "login.microsoftonline.com",
+    "login.microsoft.com",
+    "login.windows.net",
+    "autologon.microsoftazuread-sso.com",
+    "login.live.com",
+    "account.live.com",
+    "mysignins.microsoft.com",
+    "account.activedirectory.windowsazure.com",
+];
 
 /// The label of the one window, the console's.
 pub const WINDOW: &str = "main";
@@ -163,14 +182,56 @@ impl Console {
         self.origin()
     }
 
-    /// What the injected script is told: the console's origin and the
-    /// sign-in flow's hosts.
-    pub fn script_config(&self) -> serde_json::Value {
+    /// What the injected script is told: the console's origin, the sign-in
+    /// flow's hosts, and this launch's token (see [`crate::token`]).
+    pub fn script_config(&self, token: &ShellToken) -> serde_json::Value {
         serde_json::json!({
             "origin": self.origin(),
             "signInHosts": SIGN_IN_HOSTS,
+            "token": token.as_str(),
         })
     }
+
+    /// What the main frame does with a navigation to `url`: the console's
+    /// origin and the sign-in flow's hosts load in the WebView, any other
+    /// web URL opens in the platform's browser, a document the page made
+    /// itself (`about:`, `blob:`, `data:`) loads, and anything else is
+    /// refused.
+    pub fn navigation(&self, url: &Url) -> Navigation {
+        match url.scheme() {
+            "http" | "https" => {
+                if self.owns(url) || url.host_str().is_some_and(is_sign_in_host) {
+                    Navigation::Load
+                } else {
+                    Navigation::Browser
+                }
+            }
+            "about" | "blob" | "data" => Navigation::Load,
+            _ => Navigation::Refuse,
+        }
+    }
+}
+
+/// What the main frame does with a navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Navigation {
+    /// The WebView loads the URL.
+    Load,
+    /// The URL opens in the platform's browser and the WebView stays.
+    Browser,
+    /// The WebView stays and nothing opens.
+    Refuse,
+}
+
+/// Whether `host` is one of [`SIGN_IN_HOSTS`] or a subdomain of one.
+pub fn is_sign_in_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    SIGN_IN_HOSTS.iter().any(|entry| {
+        host == *entry
+            || host
+                .strip_suffix(entry)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
 }
 
 /// The permission the app manifest generates for `command`.
