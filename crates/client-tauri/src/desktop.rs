@@ -2,7 +2,6 @@
 //! a new window goes to the platform's browser, and the WebView's own
 //! downloads go to the user's download directory.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +10,7 @@ use tauri::{AppHandle, Manager, Runtime, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::commands::web_url;
-use crate::downloads::{self, Saved};
+use crate::downloads::{self, Reservations, Saved};
 use crate::script;
 
 /// The window's size when it first opens, and the smallest it may be made.
@@ -58,7 +57,7 @@ pub fn configure<'a, R: Runtime, M: Manager<R>>(
     title: &str,
 ) -> WebviewWindowBuilder<'a, R, M> {
     let opener = app.clone();
-    let pending: Arc<Mutex<HashMap<String, PathBuf>>> = Arc::default();
+    let pending: Arc<Mutex<Reservations>> = Arc::default();
     builder
         .title(title)
         .inner_size(SIZE.0, SIZE.1)
@@ -78,12 +77,13 @@ pub fn configure<'a, R: Runtime, M: Manager<R>>(
 }
 
 /// Points a download the WebView started at the user's download directory,
-/// under the name the server offered made safe and numbered, and tells the
-/// operator where it went.
+/// under the name the server offered made safe and numbered past both the
+/// files there and the downloads still under way, and tells the operator
+/// where it went.
 fn on_download<R: Runtime>(
     webview: &tauri::Webview<R>,
     event: DownloadEvent<'_>,
-    pending: &Mutex<HashMap<String, PathBuf>>,
+    pending: &Mutex<Reservations>,
 ) -> bool {
     match event {
         DownloadEvent::Requested { url, destination } => {
@@ -106,22 +106,27 @@ fn on_download<R: Runtime>(
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let name = downloads::sanitize(&offered);
-            *destination = downloads::free_path(&directory, &name, Path::exists);
+            let Ok(mut reservations) = pending.lock() else {
+                notify(
+                    webview,
+                    "Could not download: the shell's download list failed",
+                );
+                return false;
+            };
+            *destination = reservations.reserve(url.as_str(), &directory, &name, Path::exists);
+            drop(reservations);
             let saved = saved(destination);
             notify(
                 webview,
                 &format!("Downloading {} to {}", saved.name, saved.location),
             );
-            if let Ok(mut pending) = pending.lock() {
-                pending.insert(url.to_string(), destination.clone());
-            }
             true
         }
         DownloadEvent::Finished { url, path, success } => {
             let recorded = pending
                 .lock()
                 .ok()
-                .and_then(|mut pending| pending.remove(url.as_str()));
+                .and_then(|mut pending| pending.release(url.as_str(), path.as_deref()));
             let path = path.or(recorded);
             let text = match (success, path) {
                 (true, Some(path)) => {

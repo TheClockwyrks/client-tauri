@@ -1,4 +1,6 @@
 #!/usr/bin/env sh
+# shellcheck disable=all
+# Gradle's wrapper script, as Gradle writes it; it is not linted here.
 
 #
 # Copyright 2015 the original author or authors.

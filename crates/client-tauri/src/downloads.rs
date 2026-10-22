@@ -9,6 +9,7 @@
 //! offered, made safe for every file system and numbered rather than
 //! overwriting a file already there.
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -45,7 +46,13 @@ pub struct Saved {
 /// `name` as a file name every platform can write: no directory, no control
 /// character, none of the characters Windows reserves, no trailing dot or
 /// space, not a device name Windows reserves, and no longer than 200 bytes,
-/// keeping its extension. A name with nothing left is `download`.
+/// keeping its extension. A leading dot is kept, so `.env` stays `.env`. A
+/// name with nothing left, or nothing but dots, is `download`.
+///
+/// Windows reads a name as a device where the part before its first dot,
+/// trailing spaces ignored and in any case, is one: `nul.txt`, `CON .log`
+/// and `com1.tar.gz` all are. Such a name has `_` added at the end of that
+/// part.
 pub fn sanitize(name: &str) -> String {
     // Only the last path segment, whichever separator the page used.
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
@@ -57,16 +64,30 @@ pub fn sanitize(name: &str) -> String {
             c => c,
         })
         .collect();
-    let trimmed = cleaned.trim_matches(|c: char| c == ' ' || c == '.');
-    cleaned = trimmed.to_string();
+    cleaned = trim(&cleaned).to_string();
     if cleaned.is_empty() {
         return FALLBACK.into();
     }
-    let (stem, extension) = split(&cleaned);
-    if is_reserved_device(stem) {
-        cleaned = format!("{stem}_{extension}");
+    let device = cleaned.find('.').unwrap_or(cleaned.len());
+    if is_reserved_device(&cleaned[..device]) {
+        cleaned.insert(device, '_');
     }
-    truncate(&cleaned)
+    let cleaned = truncate(&cleaned);
+    match trim(&cleaned) {
+        "" => FALLBACK.into(),
+        trimmed => trimmed.to_string(),
+    }
+}
+
+/// `name` without the leading spaces nor the trailing dots and spaces Windows
+/// would drop, and empty where nothing but dots and spaces is left.
+fn trim(name: &str) -> &str {
+    let trimmed = name.trim_start_matches(' ').trim_end_matches(['.', ' ']);
+    if trimmed.chars().all(|c| c == '.') {
+        ""
+    } else {
+        trimmed
+    }
 }
 
 /// `name` split into its stem and its extension, the extension carrying its
@@ -102,6 +123,67 @@ pub fn free_path(directory: &Path, name: &str, taken: impl Fn(&Path) -> bool) ->
         .map(|attempt| directory.join(numbered(name, attempt)))
         .find(|path| !taken(path))
         .expect("an unbounded run of names holds a free one")
+}
+
+/// The paths the WebView's own downloads were pointed at and have not yet
+/// finished, so two downloads at once are never given one path.
+///
+/// The WebView creates a download's file some time after the shell names its
+/// path, so a second download asked for before then would find the first's
+/// path free. Each path chosen is held here until its download finishes or
+/// fails, and every download of one URL keeps its own, released in the order
+/// they were asked for where the WebView does not say which one finished.
+#[derive(Debug, Default)]
+pub struct Reservations {
+    reserved: HashSet<PathBuf>,
+    pending: HashMap<String, VecDeque<PathBuf>>,
+}
+
+impl Reservations {
+    /// Chooses the first path for `name` in `directory` that is neither on
+    /// disk, as `exists` says, nor reserved, and reserves it for a download
+    /// of `url`.
+    pub fn reserve(
+        &mut self,
+        url: &str,
+        directory: &Path,
+        name: &str,
+        exists: impl Fn(&Path) -> bool,
+    ) -> PathBuf {
+        let path = free_path(directory, name, |path| {
+            exists(path) || self.reserved.contains(path)
+        });
+        self.reserved.insert(path.clone());
+        self.pending
+            .entry(url.to_string())
+            .or_default()
+            .push_back(path.clone());
+        path
+    }
+
+    /// Releases the path of a download of `url` that finished: `path`, where
+    /// the WebView reports it and it is one of the URL's, or else the URL's
+    /// earliest. Returns the path released, or `None` where the URL has none
+    /// reserved.
+    pub fn release(&mut self, url: &str, path: Option<&Path>) -> Option<PathBuf> {
+        let queue = self.pending.get_mut(url)?;
+        let index = path
+            .and_then(|path| queue.iter().position(|reserved| reserved == path))
+            .unwrap_or(0);
+        let released = queue.remove(index);
+        if queue.is_empty() {
+            self.pending.remove(url);
+        }
+        if let Some(released) = &released {
+            self.reserved.remove(released);
+        }
+        released
+    }
+
+    /// Whether `path` is reserved.
+    pub fn is_reserved(&self, path: &Path) -> bool {
+        self.reserved.contains(path)
+    }
 }
 
 /// Writes `bytes` to a new file for `name` in `directory`, creating the
@@ -159,14 +241,24 @@ pub fn header_name(header: Option<&str>) -> String {
     sanitize(&decoded)
 }
 
-fn is_reserved_device(stem: &str) -> bool {
-    let upper = stem.to_ascii_uppercase();
-    matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ["COM", "LPT"].iter().any(|prefix| {
-            upper
-                .strip_prefix(prefix)
-                .is_some_and(|digit| digit.len() == 1 && digit.as_bytes()[0].is_ascii_digit())
+/// Whether Windows reads `part`, the part of a name before its first dot, as
+/// a device: `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, and `COM` or
+/// `LPT` followed by a digit or a superscript one, two or three, in any case
+/// and with any trailing spaces.
+fn is_reserved_device(part: &str) -> bool {
+    let upper = part.trim_end_matches(' ').to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|prefix| {
+        upper.strip_prefix(prefix).is_some_and(|rest| {
+            let mut chars = rest.chars();
+            matches!(
+                (chars.next(), chars.next()),
+                (Some('0'..='9' | '\u{b9}' | '\u{b2}' | '\u{b3}'), None)
+            )
         })
+    })
 }
 
 /// `name` cut to [`MAX_NAME_BYTES`] on a character boundary, keeping its

@@ -18,12 +18,17 @@ interface Gesture {
 interface Config {
   origin: string;
   signInHosts: string[];
+  token: string;
 }
 
 interface ShellModule {
   installShell(win: unknown, config: Config): boolean;
   decide(anchor: unknown, gesture: Gesture, config: Config): Activation | null;
   NOTICE_EVENT: string;
+  SHELL_RESUME_EVENT: string;
+  RESUME_EVENT: string;
+  RESUME_COALESCE_MS: number;
+  TOKEN_HEADER: string;
 }
 
 const require = createRequire(import.meta.url);
@@ -33,7 +38,14 @@ const ORIGIN = "https://console.staging.testcabinet.ai";
 const CONFIG: Config = {
   origin: ORIGIN,
   signInHosts: ["cloudflareaccess.com", "login.microsoftonline.com"],
+  token: "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
 };
+
+// The options every call of a command carries: the launch's token, and the
+// headers the command takes itself.
+function withToken(headers: Record<string, string> = {}) {
+  return { headers: { ...headers, "x-tcab-shell-token": CONFIG.token } };
+}
 
 interface Call {
   command: string;
@@ -118,6 +130,29 @@ describe("installShell", () => {
     expect(shell.installShell(microsoft.win, CONFIG)).toBe(false);
   });
 
+  it("keeps the token to itself and sends it with every call", async () => {
+    const current = page();
+    shell.installShell(current.win, CONFIG);
+    const globals = Object.getOwnPropertyNames(current.win).filter((name) => {
+      try {
+        return JSON.stringify(
+          (current.win as unknown as Record<string, unknown>)[name],
+        )?.includes(CONFIG.token);
+      } catch {
+        return false;
+      }
+    });
+    expect(globals).toEqual([]);
+    current.win.open("https://example.com/");
+    await current.win.navigator.clipboard.writeText("x");
+    await settle();
+    expect(current.calls.map((call) => call.options)).toEqual([
+      withToken(),
+      withToken(),
+    ]);
+    expect(shell.TOKEN_HEADER).toBe("x-tcab-shell-token");
+  });
+
   it("installs once however often it runs", () => {
     const { win } = page();
     shell.installShell(win, CONFIG);
@@ -146,7 +181,7 @@ describe("window.open", () => {
       {
         command: "open_external",
         args: { url: `${ORIGIN}/runs/xyz` },
-        options: undefined,
+        options: withToken(),
       },
     ]);
   });
@@ -165,6 +200,20 @@ describe("window.open", () => {
     current.win.open("mailto:someone@example.com");
     await settle();
     expect(current.calls).toEqual([]);
+  });
+
+  it("does nothing for a call naming no page, and hands back no window", () => {
+    const native = vi.fn();
+    const happy = page();
+    Object.assign(happy.win, { open: native });
+    shell.installShell(happy.win, CONFIG);
+    for (const url of [undefined, "", "  ", "about:blank", "ABOUT:BLANK"]) {
+      expect(happy.win.open(url)).toBeNull();
+      expect(happy.win.open(url, "_self")).toBeNull();
+      expect(happy.win.open(url, "_blank")).toBeNull();
+    }
+    expect(native).not.toHaveBeenCalled();
+    expect(happy.calls).toEqual([]);
   });
 
   it("leaves a URL named for the current context to the WebView", () => {
@@ -499,12 +548,12 @@ describe("downloads", () => {
     expect(call?.command).toBe("save_download");
     expect(call?.args).toBeInstanceOf(Uint8Array);
     expect(Array.from(call?.args as Uint8Array)).toEqual([1, 2, 3]);
-    expect(call?.options).toEqual({
-      headers: {
+    expect(call?.options).toEqual(
+      withToken({
         "x-tcab-file-name": "run%201.gif",
         "x-tcab-mime-type": "image/gif",
-      },
-    });
+      }),
+    );
     const notice = current.win.document.querySelector(
       "[data-tcab-shell-notice]",
     );
@@ -569,7 +618,7 @@ describe("clipboard", () => {
       {
         command: "copy_text",
         args: { text: "https://tcab.ai/r/1" },
-        options: undefined,
+        options: withToken(),
       },
     ]);
   });
@@ -639,6 +688,80 @@ describe("notices", () => {
     expect(timers.size).toBe(1);
     for (const callback of timers.values()) callback();
     expect(notices()).toHaveLength(0);
+  });
+});
+
+describe("resume", () => {
+  let current: Page;
+  let resumes: number;
+  let visibility: DocumentVisibilityState;
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(1_000_000);
+    current = page();
+    visibility = "visible";
+    Object.defineProperty(current.win.document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    shell.installShell(current.win, CONFIG);
+    resumes = 0;
+    current.win.addEventListener(shell.RESUME_EVENT, () => resumes++);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function turn(state: DocumentVisibilityState) {
+    visibility = state;
+    current.win.document.dispatchEvent(
+      new current.win.Event("visibilitychange"),
+    );
+  }
+  function shellResume() {
+    current.win.dispatchEvent(new current.win.Event(shell.SHELL_RESUME_EVENT));
+  }
+
+  it("names the console's event", () => {
+    expect(shell.RESUME_EVENT).toBe("tcab:resume");
+    expect(shell.SHELL_RESUME_EVENT).toBe("tcab:shell-resume");
+  });
+
+  it("dispatches on the page turning visible after it was hidden", () => {
+    turn("visible");
+    expect(resumes).toBe(0);
+    turn("hidden");
+    expect(resumes).toBe(0);
+    turn("visible");
+    expect(resumes).toBe(1);
+  });
+
+  it("dispatches on the shell's event, which a wake from sleep raises alone", () => {
+    shellResume();
+    expect(resumes).toBe(1);
+  });
+
+  it("dispatches once for the two signals of one return, in either order", () => {
+    turn("hidden");
+    turn("visible");
+    shellResume();
+    expect(resumes).toBe(1);
+    vi.setSystemTime(Date.now() + shell.RESUME_COALESCE_MS);
+    shellResume();
+    turn("hidden");
+    turn("visible");
+    expect(resumes).toBe(2);
+  });
+
+  it("dispatches again for a later return", () => {
+    shellResume();
+    vi.setSystemTime(Date.now() + shell.RESUME_COALESCE_MS - 1);
+    shellResume();
+    expect(resumes).toBe(1);
+    vi.setSystemTime(Date.now() + 1);
+    turn("hidden");
+    turn("visible");
+    expect(resumes).toBe(2);
   });
 });
 

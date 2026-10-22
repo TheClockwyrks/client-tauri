@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- The WebView loads the console over the network. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 7 to 9 write a download into the public Downloads directory
+         with it, asked for at the first download; from Android 10 on, the
+         Downloads collection needs no permission. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
     <application
         android:icon="@mipmap/ic_launcher"

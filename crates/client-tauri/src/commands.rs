@@ -1,22 +1,31 @@
 //! The commands the injected script calls, which the console's origin alone
-//! is granted (see [`crate::console::Console::capability`]).
+//! is granted (see [`crate::console::Console::capability`]), and which each
+//! refuse a call that does not carry the launch's token (see
+//! [`crate::token`]).
 
 use tauri::ipc::Request;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 use crate::downloads::{self, NAME_HEADER, Saved, TYPE_HEADER};
+use crate::token::ShellToken;
 
 /// Opens `url` in the platform's browser.
 ///
 /// # Errors
 ///
-/// Returns an error where `url` is not an `http` or `https` URL, or the
-/// platform could not open it.
+/// Returns an error where the call does not carry the token, `url` is not an
+/// `http` or `https` URL, or the platform could not open it.
 #[tauri::command]
-pub async fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+pub async fn open_external<R: Runtime>(
+    app: AppHandle<R>,
+    token: State<'_, ShellToken>,
+    request: Request<'_>,
+    url: String,
+) -> Result<(), String> {
+    token.check(request.headers())?;
     let url = web_url(&url)?;
     app.opener()
         .open_url(url.as_str(), None::<&str>)
@@ -27,9 +36,16 @@ pub async fn open_external<R: Runtime>(app: AppHandle<R>, url: String) -> Result
 ///
 /// # Errors
 ///
-/// Returns an error where the platform refused the write.
+/// Returns an error where the call does not carry the token, or the platform
+/// refused the write.
 #[tauri::command]
-pub async fn copy_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
+pub async fn copy_text<R: Runtime>(
+    app: AppHandle<R>,
+    token: State<'_, ShellToken>,
+    request: Request<'_>,
+    text: String,
+) -> Result<(), String> {
+    token.check(request.headers())?;
     app.clipboard()
         .write_text(text)
         .map_err(|error| format!("the clipboard refused the text: {error}"))
@@ -40,13 +56,15 @@ pub async fn copy_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<()
 ///
 /// # Errors
 ///
-/// Returns an error where the body is not bytes or the file could not be
-/// written.
+/// Returns an error where the call does not carry the token, the body is not
+/// bytes or the file could not be written.
 #[tauri::command]
 pub async fn save_download<R: Runtime>(
     app: AppHandle<R>,
+    token: State<'_, ShellToken>,
     request: Request<'_>,
 ) -> Result<Saved, String> {
+    token.check(request.headers())?;
     let bytes = downloads::body_bytes(request.body())?;
     let header = |name| {
         request
