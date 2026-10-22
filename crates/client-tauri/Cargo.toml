@@ -23,6 +23,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 # Take a crate of another repository up with `<crate> = { workspace = true }`;
 # the root manifest offers the ones the dependency edges permit.
+getrandom = { workspace = true }
 percent-encoding = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

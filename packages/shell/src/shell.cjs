@@ -23,6 +23,12 @@
  * @property {string[]} signInHosts The hosts of the sign-in flow, each
  *   standing for itself and its subdomains, which a link may lead to inside
  *   the WebView.
+ * @property {string} token This launch's token, which every call of a
+ *   command carries and the Rust side checks. The WebView runs this script in
+ *   every frame, a cross-origin frame of a run's build among them, so the
+ *   token is what tells the console's own calls from that frame's: the script
+ *   keeps it in its closure once the origin check has passed, and never puts
+ *   it where a page can read it.
  */
 
 /**
@@ -56,6 +62,29 @@
 /** The `window` event a native part of the shell raises to show a notice. */
 const NOTICE_EVENT = "tcab:shell-notice";
 
+/**
+ * The `window` event the Rust side raises when the app returns from the
+ * background: the window shown again, the machine woken from sleep, or the
+ * Android activity resumed.
+ */
+const SHELL_RESUME_EVENT = "tcab:shell-resume";
+
+/** The `window` event the console reopens its event stream on. */
+const RESUME_EVENT = "tcab:resume";
+
+/**
+ * How long after one `tcab:resume` another signal of a return is read as the
+ * same return, in milliseconds. One return is usually seen twice, the page
+ * turning visible and the shell's own event for the window or the activity,
+ * and the sleep watcher sees a wake up to ten seconds late. A second return
+ * inside this span follows an absence too short for the stream reopened by
+ * the first to have gone stale.
+ */
+const RESUME_COALESCE_MS = 15000;
+
+/** The request header every call of a command carries the token in. */
+const TOKEN_HEADER = "x-tcab-shell-token";
+
 /** How long a notice stays on the page, in milliseconds. */
 const NOTICE_MS = 5000;
 
@@ -77,6 +106,9 @@ const SAME_CONTEXT_TARGETS = ["", "_self", "_parent", "_top"];
  * - `navigator.clipboard.writeText` writes through the shell's clipboard.
  * - A notice the shell raises with the `tcab:shell-notice` event is shown on
  *   the page.
+ * - The page turning visible after it was hidden, and the shell's
+ *   `tcab:shell-resume`, dispatch `tcab:resume` on the window, once per
+ *   return.
  *
  * @param {Window & typeof globalThis} win
  * @param {ShellConfig} config
@@ -88,6 +120,7 @@ function installShell(win, config) {
   installed.add(win);
 
   const { document } = win;
+  const token = String(config.token);
 
   /**
    * Calls a command of the shell. The IPC is resolved at the call, since the
@@ -95,15 +128,17 @@ function installShell(win, config) {
    *
    * @param {string} command
    * @param {unknown} [args]
-   * @param {{ headers?: Record<string, string> }} [options]
+   * @param {Record<string, string>} [headers]
    * @returns {Promise<unknown>}
    */
-  function invoke(command, args, options) {
+  function invoke(command, args, headers) {
     const internals = win.__TAURI_INTERNALS__;
     if (!internals) {
       return Promise.reject(new Error("the shell's IPC is not available"));
     }
-    return internals.invoke(command, args, options);
+    return internals.invoke(command, args, {
+      headers: { ...headers, [TOKEN_HEADER]: token },
+    });
   }
 
   /** @type {HTMLElement | null} */
@@ -178,10 +213,8 @@ function installShell(win, config) {
         const type = blob.type || response.headers.get("content-type") || "";
         const saved = /** @type {SavedDownload} */ (
           await invoke("save_download", bytes, {
-            headers: {
-              "x-tcab-file-name": encodeURIComponent(name),
-              "x-tcab-mime-type": type,
-            },
+            "x-tcab-file-name": encodeURIComponent(name),
+            "x-tcab-mime-type": type,
           })
         );
         notice(`Saved ${saved.name} to ${saved.location}`);
@@ -200,8 +233,11 @@ function installShell(win, config) {
   // window.open opens every URL in a new browsing context but the ones named
   // for this one, so a web URL goes to the platform's browser. The page is
   // handed no window back, which a caller that focuses the result tolerates.
+  // A call naming no page, which a caller makes to write into the blank
+  // window it is handed, is given none and does nothing.
   const nativeOpen = win.open;
   win.open = function open(url, target, features) {
+    if (isBlank(url)) return null;
     const name = target === undefined ? "_blank" : String(target).toLowerCase();
     if (SAME_CONTEXT_TARGETS.includes(name) && name !== "") {
       return nativeOpen.call(win, url, target, features);
@@ -290,6 +326,28 @@ function installShell(win, config) {
   win.addEventListener(NOTICE_EVENT, (event) => {
     const detail = /** @type {CustomEvent} */ (event).detail;
     if (detail !== undefined && detail !== null) notice(String(detail));
+  });
+
+  // A return is seen by the page, turning visible after it was hidden, and by
+  // the shell, which also sees a wake from sleep the page does not. Both lead
+  // to one event the console listens for, and the signals of one return to
+  // one dispatch of it.
+  let lastResume = -Infinity;
+  function resume() {
+    const now = Date.now();
+    if (now - lastResume < RESUME_COALESCE_MS) return;
+    lastResume = now;
+    win.dispatchEvent(new win.Event(RESUME_EVENT));
+  }
+  win.addEventListener(SHELL_RESUME_EVENT, resume);
+  let hidden = document.visibilityState === "hidden";
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      hidden = true;
+    } else if (hidden) {
+      hidden = false;
+      resume();
+    }
   });
 
   return true;
@@ -418,6 +476,18 @@ function resolve(url, base) {
 }
 
 /**
+ * Whether `url`, an argument of `window.open`, names no page: absent, empty,
+ * or `about:blank`.
+ *
+ * @param {unknown} url
+ */
+function isBlank(url) {
+  if (url === undefined || url === null) return true;
+  const text = String(url).trim();
+  return text === "" || text.toLowerCase() === "about:blank";
+}
+
+/**
  * Whether `href` is an `http:` or `https:` URL, the only kind the shell opens
  * in the platform's browser.
  *
@@ -472,5 +542,13 @@ function describe(error) {
 }
 
 if (typeof module !== "undefined" && module) {
-  module.exports = { installShell, decide, NOTICE_EVENT };
+  module.exports = {
+    installShell,
+    decide,
+    NOTICE_EVENT,
+    SHELL_RESUME_EVENT,
+    RESUME_EVENT,
+    RESUME_COALESCE_MS,
+    TOKEN_HEADER,
+  };
 }

@@ -2,7 +2,7 @@
 <!--
   The colors the activity paints the system bars' bands with: `status_bar`
   behind the status bar and `navigation_bar` behind the navigation bar. The
-  console has one dark theme, so both are its background, `--tcab-bg`, in the
+  console has one dark theme, so both are its background (the tcab-bg color), in the
   light scheme and in the dark one `values-night/` holds, and the bars read
   as the page's own. `console_background` is the window's own background,
   shown before the console's first page arrives.

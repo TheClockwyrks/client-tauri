@@ -2,6 +2,7 @@
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "The Test Cabinet",
   "identifier": "ai.testcabinet.client",
+  "version": "0.1.0",
   "app": {
     "withGlobalTauri": false,
     "windows": [],
@@ -24,8 +25,7 @@
       "icons/icon.png"
     ],
     "android": {
-      "minSdkVersion": 24,
-      "versionCode": 1
+      "minSdkVersion": 24
     }
   }
 }

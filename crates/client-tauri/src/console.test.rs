@@ -6,6 +6,7 @@ use tauri::utils::config::PluginConfig;
 use url::Url;
 
 use super::*;
+use crate::token::ShellToken;
 
 const PROD: &str = "https://console.testcabinet.ai";
 const STAGING: &str = "https://console.staging.testcabinet.ai";
@@ -175,13 +176,72 @@ fn grants_each_command_by_its_generated_permission() {
 }
 
 #[test]
-fn tells_the_script_the_origin_and_the_sign_in_hosts() {
+fn tells_the_script_the_origin_the_sign_in_hosts_and_the_token() {
     let console = Console::parse(STAGING).expect("staging");
-    assert_eq!(
-        console.script_config(),
-        serde_json::json!({
-            "origin": STAGING,
-            "signInHosts": ["cloudflareaccess.com", "login.microsoftonline.com"],
-        })
-    );
+    let config = console.script_config(&ShellToken::from_value("t0k3n"));
+    assert_eq!(config["origin"], STAGING);
+    assert_eq!(config["signInHosts"], serde_json::json!(SIGN_IN_HOSTS));
+    assert_eq!(config["token"], "t0k3n");
+}
+
+#[test]
+fn recognizes_the_sign_in_hosts_and_their_subdomains() {
+    for host in [
+        "shrill-term-5c16.cloudflareaccess.com",
+        "login.microsoftonline.com",
+        "device.login.microsoftonline.com",
+        "LOGIN.MICROSOFT.COM",
+        "login.live.com.",
+        "autologon.microsoftazuread-sso.com",
+    ] {
+        assert!(is_sign_in_host(host), "{host}");
+    }
+    for host in [
+        "evilcloudflareaccess.com",
+        "login.microsoftonline.com.example.com",
+        "microsoftonline.com",
+        "aadcdn.msftauth.net",
+        "example.com",
+    ] {
+        assert!(!is_sign_in_host(host), "{host}");
+    }
+}
+
+#[test]
+fn keeps_the_main_frame_on_the_console_and_its_sign_in_flow() {
+    let console = Console::parse(PROD).expect("prod");
+    for load in [
+        "https://console.testcabinet.ai/runs/1",
+        "https://shrill-term-5c16.cloudflareaccess.com/cdn-cgi/access/login",
+        "https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize",
+        "https://login.live.com/oauth20_authorize.srf",
+        "about:blank",
+        "blob:https://console.testcabinet.ai/1234",
+        "data:text/plain,hi",
+    ] {
+        assert_eq!(console.navigation(&url(load)), Navigation::Load, "{load}");
+    }
+    for browser in [
+        "https://run-abc.test-cabinet-runs.pages.dev/",
+        "https://console.staging.testcabinet.ai/",
+        "http://console.testcabinet.ai/",
+        "https://tcab.ai/r/1",
+    ] {
+        assert_eq!(
+            console.navigation(&url(browser)),
+            Navigation::Browser,
+            "{browser}"
+        );
+    }
+    for refuse in [
+        "file:///etc/passwd",
+        "mailto:a@example.com",
+        "intent://x#Intent;end",
+    ] {
+        assert_eq!(
+            console.navigation(&url(refuse)),
+            Navigation::Refuse,
+            "{refuse}"
+        );
+    }
 }

@@ -5,26 +5,30 @@
 //! here as it is written, so building the crate never runs npm.
 
 use crate::console::Console;
+use crate::token::ShellToken;
 
 /// The script's source, `installShell` and the helpers it calls.
 const SHELL: &str = include_str!("../../../packages/shell/src/shell.cjs");
 
-/// The `window` event the console reopens its event stream on.
-pub const RESUME_EVENT: &str = "tcab:resume";
+/// The `window` event the shell raises when the app returns from the
+/// background. The script turns it into the console's `tcab:resume`, once per
+/// return, together with the page's own return to visibility.
+pub const SHELL_RESUME_EVENT: &str = "tcab:shell-resume";
 
 /// The `window` event the script shows a notice for.
 pub const NOTICE_EVENT: &str = "tcab:shell-notice";
 
 /// The initialization script for `console`'s window: the shell's source,
 /// wrapped so it declares no global, then installed with the console's
-/// origin and the sign-in hosts.
+/// origin, the sign-in hosts and this launch's token.
 ///
-/// The WebView runs it before each page's own scripts on every page of the
-/// main frame, and the script installs itself on the console's origin alone.
-pub fn initialization_script(console: &Console) -> String {
+/// The WebView runs it before each page's own scripts, on every frame on
+/// Android, and the script installs itself, keeping the token, on the
+/// console's origin alone.
+pub fn initialization_script(console: &Console, token: &ShellToken) -> String {
     format!(
         "(function (module) {{\n{SHELL}\ninstallShell(window, {config});\n}})();\n",
-        config = console.script_config(),
+        config = console.script_config(token),
     )
 }
 
@@ -33,7 +37,7 @@ pub fn initialization_script(console: &Console) -> String {
 pub fn resume_script() -> String {
     format!(
         "window.dispatchEvent(new Event({}));",
-        json_string(RESUME_EVENT)
+        json_string(SHELL_RESUME_EVENT)
     )
 }
 

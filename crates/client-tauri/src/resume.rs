@@ -8,14 +8,19 @@
 //!
 //! What counts as a return:
 //!
-//! - on Android, the activity resuming, which the runtime reports as
-//!   [`tauri::RunEvent::Resumed`];
+//! - on Android, the activity resuming, which the runtime reports as the
+//!   console's window's `WindowEvent::Resumed` (the runtime's own
+//!   `RunEvent::Resumed` is its event loop resuming, not the activity);
 //! - on the desktop, the window shown again after it was minimized or
 //!   hidden, and the machine waking from sleep, which a watcher thread sees
 //!   as a gap in the wall clock far longer than the interval it slept for.
 //!
 //! A window merely losing and regaining focus is not a return: the WebView
 //! kept running behind the other window.
+//!
+//! The shell raises its own event, `tcab:shell-resume`, and the injected
+//! script turns it into `tcab:resume` together with the page's own return to
+//! visibility, dispatching one `tcab:resume` for the signals of one return.
 
 use std::time::Duration;
 
@@ -120,7 +125,11 @@ mod desktop {
 pub fn on_run_event<R: Runtime>(app: &AppHandle<R>, event: &tauri::RunEvent) {
     match event {
         #[cfg(mobile)]
-        tauri::RunEvent::Resumed => dispatch(app),
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Resumed,
+            ..
+        } if label == WINDOW => dispatch(app),
         #[cfg(desktop)]
         tauri::RunEvent::WindowEvent {
             label,
